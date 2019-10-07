@@ -12,6 +12,14 @@ from timeit import default_timer as timer
 import utils
 import config
 
+# Leon: Import cProfile for profiling
+import cProfile
+
+# Leon: Flags to toggle profiling and multiprocessing
+_PROFILE = True
+_MP = False
+
+
 def inittbl(filename, chromosome_version, kmer = 6, filetype=""):
     start = time.time()
     file_extension = os.path.splitext(filename)[1]
@@ -59,6 +67,10 @@ def inittbl(filename, chromosome_version, kmer = 6, filetype=""):
         elif type == "icgc" or type == "mut":
             if file_extension == ".tsv":
                 separator = "\t"
+
+                # Leon: Dirty fix for bug reading tsv files
+                type = 'tsv'
+
             else: # must be csv since we checked it, TODO: can also return error here
                 separator = ","
             if type == "icgc":
@@ -167,6 +179,11 @@ def predict(predlist, dataset, ready_count,
                     # For 10k rows, total: 141.34secs, from e-score 128.56331secs
                     # For 50k rows, total: 771.42 secs, from e-score: 752.123secs
                     # another example: 2547.41secs, from e-score: 2523.96897secs
+
+                    # Leon: Dirty fix for variable naming bugs
+                    escore_dir = config.ESCORE_DIR
+                    pbm_name = pbmname
+
                     eshort_path = "%s/%s_escore.txt" % (escore_dir,pbm_name)
                     short2long_map = "%s/index_short_to_long.csv" % (escore_dir)
                     isbound = utils.isbound_escore_18mer(row_key[2], eshort_path, short2long_map, spec_ecutoff, nonspec_ecutoff)
@@ -280,14 +297,20 @@ def do_prediction(intbl, pbms, gene_names,
         filterval = float(filterval)
     else: #z-score
         filterval = int(filterval)
-    async_pools = [pool.apply_async(predict, (preds[i], intbl, shared_ready_sum, filteropt, filterval, spec_ecutoff, nonspec_ecutoff)) for i in range(0,len(preds))]
 
-    total = len(predfiles)
-    while not all([p.ready() for p in async_pools]):
-        time.sleep(2)
+    # Leon: Modifications to toggle multiprocessing for profiling
+    if _MP:
+        async_pools = [pool.apply_async(predict, (preds[i], intbl, shared_ready_sum, filteropt, filterval, spec_ecutoff, nonspec_ecutoff)) for i in range(0,len(preds))]
 
-    res = [p.get() for p in async_pools]
-    pool.terminate()
+        total = len(predfiles)
+        while not all([p.ready() for p in async_pools]):
+            time.sleep(2)
+
+        res = [p.get() for p in async_pools]
+        pool.terminate()
+    else:
+        res = [predict(preds[i], intbl, shared_ready_sum, filteropt, filterval, spec_ecutoff, nonspec_ecutoff) for i in
+               range(0, len(preds))]
 
     colnames,datavalues = postprocess(res,gene_names,filteropt,filterval)
 
@@ -339,4 +362,8 @@ def main():
     pd.DataFrame(datavalues).to_csv(args.outpath, index = False, columns = colnames, sep="\t")
 
 if __name__=="__main__":
-    main()
+    # Leon: run with or without profiling
+    if _PROFILE:
+        cProfile.run('main()', 'profile_{}.stats'.format('mp' if _MP else 'nomp'))
+    else:
+        main()
