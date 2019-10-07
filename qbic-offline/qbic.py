@@ -344,6 +344,6 @@ def main():
 if __name__=="__main__":
     # Leon: run with or without profiling
     if _PROFILE:
-        cProfile.run('main()', 'profile_{}.stats'.format('mp' if _MP else 'nomp'))
+        cProfile.run('main()', 'profile_{}.stats'.format('mp{}'.format(config.PCOUNT) if _MP else 'nomp'))
     else:
         main()
