@@ -15,6 +15,14 @@ from timeit import default_timer as timer
 import utils
 import config
 
+# Leon: Import cProfile for profiling
+import cProfile
+
+# Leon: Flags to toggle profiling and multiprocessing
+_PROFILE = True
+_MP = False
+
+
 def inittbl(filename, chromosome_version, kmer = 6, filetype=""):
     start = time.time()
     file_extension = os.path.splitext(filename)[1]
@@ -62,6 +70,10 @@ def inittbl(filename, chromosome_version, kmer = 6, filetype=""):
         elif type == "icgc" or type == "mut":
             if file_extension == ".tsv":
                 separator = "\t"
+
+                # Leon: Dirty fix for bug reading tsv files
+                type = 'tsv'
+
             else: # must be csv since we checked it, TODO: can also return error here
                 separator = ","
             if type == "icgc":
@@ -250,22 +262,28 @@ def do_prediction(intbl, pbms, gene_names,
         filterval = int(filterval)
     procs = [] # hold the processes
     print('numthreads', num_threads)
-    for pred in preds:
-        p = mp.Process(target = predict, args = (pred, intbl, shared_ready_sum, filteropt, filterval, spec_ecutoff, nonspec_ecutoff, q, num_threads))
-        p.start()
-        procs += [p]
 
-    # store queue results
-    res = []
+    # Leon: Modifications to toggle multiprocessing for profiling
+    if _MP:
+        for pred in preds:
+            p = mp.Process(target = predict, args = (pred, intbl, shared_ready_sum, filteropt, filterval, spec_ecutoff, nonspec_ecutoff, q, num_threads))
+            p.start()
+            procs += [p]
 
-    for p in procs:
-        res += [q.get()]
-        q.task_done()
-        p.join()
-        p.terminate()
+        # store queue results
+        res = []
 
-    q.join()
-    q.close()
+        for p in procs:
+            res += [q.get()]
+            q.task_done()
+            p.join()
+            p.terminate()
+
+        q.join()
+        q.close()
+    else:
+        res = [predict(preds[i], intbl, shared_ready_sum, filteropt, filterval, spec_ecutoff, nonspec_ecutoff) for i in
+               range(0, len(preds))]
 
     return postprocess(res,gene_names,filteropt,filterval)
 
@@ -324,4 +342,8 @@ def main():
     res.to_csv(args.outpath, index = False, sep="\t")
 
 if __name__=="__main__":
-    main()
+    # Leon: run with or without profiling
+    if _PROFILE:
+        cProfile.run('main()', 'profile_{}.stats'.format('mp' if _MP else 'nomp'))
+    else:
+        main()
