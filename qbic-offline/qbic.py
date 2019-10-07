@@ -15,7 +15,15 @@ from timeit import default_timer as timer
 import utils
 import config
 
-def inittbl(filename, chromosome_version, kmer = 6, filetype=""):
+# Leon: Import cProfile for profiling
+import cProfile
+
+# Leon: Flags to toggle profiling and multiprocessing
+_PROFILE = False
+_MP = True
+
+
+def inittbl(filename, chromosome_version, kmer=6, filetype=""):
     start = time.time()
     file_extension = os.path.splitext(filename)[1]
 
@@ -53,56 +61,67 @@ def inittbl(filename, chromosome_version, kmer = 6, filetype=""):
                 idx += 1
                 # line[1] is the base mid nucleotide mutated to
                 escore_seq = line[0] + line[1]
-                mid_seq = escore_seq[len(escore_seq)//2-6:len(escore_seq)//2+5] + line[1] # the 12mer seq
-                result.append([idx,mid_seq,escore_seq,utils.seqtoi(mid_seq),0,0,"None"])
+                mid_seq = escore_seq[len(escore_seq) // 2 - 6:len(escore_seq) // 2 + 5] + line[1]  # the 12mer seq
+                result.append([idx, mid_seq, escore_seq, utils.seqtoi(mid_seq), 0, 0, "None"])
     else:
         if type == "vcf":
-            df = pd.read_csv(filename,sep="\t",header=None).drop(2,1)
-            df = df.rename(columns={0:"chromosome",1:"pos",3:"mutated_from",4:"mutated_to"})
+            df = pd.read_csv(filename, sep="\t", header=None).drop(2, 1)
+            df = df.rename(columns={0: "chromosome", 1: "pos", 3: "mutated_from", 4: "mutated_to"})
         elif type == "icgc" or type == "mut":
             if file_extension == ".tsv":
                 separator = "\t"
-            else: # must be csv since we checked it, TODO: can also return error here
+
+                # Leon: Dirty fix for bug reading tsv files
+                type = 'tsv'
+
+            else:  # must be csv since we checked it, TODO: can also return error here
                 separator = ","
             if type == "icgc":
                 df = pd.read_csv(filename,
-                            sep=separator,
-                            usecols=['chromosome','chromosome_start','mutation_type','mutated_from_allele','mutated_to_allele'])
-                df = df[df['mutation_type'].apply(lambda x: "single base substitution" == x)].drop('mutation_type',1).drop_duplicates() # only take single base mutation
-                df = df.rename(columns={"chromosome_start":"pos","mutated_from_allele":"mutated_from","mutated_to_allele":"mutated_to"})
-            else: # type == "mut", usually have chr, start, end, ref, alt
+                                 sep=separator,
+                                 usecols=['chromosome', 'chromosome_start', 'mutation_type', 'mutated_from_allele',
+                                          'mutated_to_allele'])
+                df = df[df['mutation_type'].apply(lambda x: "single base substitution" == x)].drop('mutation_type',
+                                                                                                   1).drop_duplicates()  # only take single base mutation
+                df = df.rename(columns={"chromosome_start": "pos", "mutated_from_allele": "mutated_from",
+                                        "mutated_to_allele": "mutated_to"})
+            else:  # type == "mut", usually have chr, start, end, ref, alt
                 df = pd.read_csv(filename, sep=separator)
-                df.columns = ["chromosome",'pos','chromosome_end',"mutated_from","mutated_to"]
-                df = df.drop('chromosome_end',1)
+                df.columns = ["chromosome", 'pos', 'chromosome_end', "mutated_from", "mutated_to"]
+                df = df.drop('chromosome_end', 1)
         else:
             raise Exception("File type is not recognized")
 
         # remove "chr" from all chromosomes
-        df['chromosome'] = df['chromosome'].map(lambda x:x.replace("chr",""))
+        df['chromosome'] = df['chromosome'].map(lambda x: x.replace("chr", ""))
 
-        grouped = df.groupby('chromosome',sort=True)
-        dataset = {key:item for key,item in grouped}
+        grouped = df.groupby('chromosome', sort=True)
+        dataset = {key: item for key, item in grouped}
 
-        for cidx in [str(a) for a in range(1,23)] + ['X','Y']:
+        for cidx in [str(a) for a in range(1, 23)] + ['X', 'Y']:
             if cidx not in dataset:
                 continue
             print("Iterating dataset for chromosome {}...".format(cidx))
             chromosome = utils.get_chrom(config.CHRDIR + "/" + chromosome_version + "/chr" + str(cidx) + '.fa.gz')
-            for idx,row in dataset[cidx].iterrows():
+            for idx, row in dataset[cidx].iterrows():
                 pos = row['pos'] - 1
                 if row['mutated_from'] != chromosome[pos]:
                     cver = cpath.split("/")[-1]
-                    error = "For the input mutation %s>%s at position %s in chromosome %s, the mutated_from nucleotide (%s) does not match the nucleotide in the %s reference genome (%s). Please check the input data and verify that the correct version of the reference human genome was used." % (row['mutated_from'], row['mutated_to'], row['pos'], row['chromosome'], row['mutated_from'], cver, chromosome[pos])
+                    error = "For the input mutation %s>%s at position %s in chromosome %s, the mutated_from nucleotide (%s) does not match the nucleotide in the %s reference genome (%s). Please check the input data and verify that the correct version of the reference human genome was used." % (
+                    row['mutated_from'], row['mutated_to'], row['pos'], row['chromosome'], row['mutated_from'], cver,
+                    chromosome[pos])
                     raise Exception(error)
-                seq = chromosome[pos-kmer+1:pos+kmer] + row['mutated_to'] #-5,+6
+                seq = chromosome[pos - kmer + 1:pos + kmer] + row['mutated_to']  # -5,+6
                 # for escore, just use 8?
-                escore_seq = chromosome[pos-9+1:pos+9] + row['mutated_to']
-                result.append([idx,seq,escore_seq,utils.seqtoi(seq),0,0,"None"]) #rowidx,seq,escore_seq,val,diff,t,pbmname
+                escore_seq = chromosome[pos - 9 + 1:pos + 9] + row['mutated_to']
+                result.append(
+                    [idx, seq, escore_seq, utils.seqtoi(seq), 0, 0, "None"])  # rowidx,seq,escore_seq,val,diff,t,pbmname
 
-    result = sorted(result,key=lambda result:result[0])
+    result = sorted(result, key=lambda result: result[0])
     # example row in result: [73, 'CCAACCAACCCA', 'ATTCCAACCAACCCCCTA', 5263444, 0, 0, 'None']
-    print("Time to preprocess: {:.2f}secs".format(time.time()-start))
+    print("Time to preprocess: {:.2f}secs".format(time.time() - start))
     return result
+
 
 def predict(predlist, dataset, ready_count,
             filteropt="p-value", filterval=0.001, spec_ecutoff=0.4, nonspec_ecutoff=0.35,
@@ -119,7 +138,7 @@ def predict(predlist, dataset, ready_count,
      filteropt=1: diff,z_score,tfname
      filteropt=2: diff,z_score,p_val,escore,tfname
     """
-    #[96, 'TCATGGTGGGTT', GCTTCATGGTGGGTGGAT, 13872815, 0, 0, '-'] -- 37, 'GCCCAGAAAGGA', 9773096
+    # [96, 'TCATGGTGGGTT', GCTTCATGGTGGGTGGAT, 13872815, 0, 0, '-'] -- 37, 'GCCCAGAAAGGA', 9773096
     '''
     EDIT -- this only works for p-values, z-scores need a different memory access pattern
     '''
@@ -127,17 +146,17 @@ def predict(predlist, dataset, ready_count,
     # store the results here
     res = []
 
-    if num_threads is  None:
-        #iterate for each transcription factor
-        for i in range(0,len(predlist)):
-            res += [predPvalueHelper(predlist[i], dataset, filterval, spec_ecutoff,nonspec_ecutoff)]
+    if num_threads is None:
+        # iterate for each transcription factor
+        for i in range(0, len(predlist)):
+            res += [predPvalueHelper(predlist[i], dataset, filterval, spec_ecutoff, nonspec_ecutoff)]
             ready_count.value += 1
     else:
         # concurrent execution for improved I/O
-        pPH_partial = ft.partial(predPvalueHelper, **{'dataset':dataset, 'filterval':filterval,
-                                                    'spec_ecutoff':spec_ecutoff, 'nonspec_ecutoff':nonspec_ecutoff})
+        pPH_partial = ft.partial(predPvalueHelper, **{'dataset': dataset, 'filterval': filterval,
+                                                      'spec_ecutoff': spec_ecutoff, 'nonspec_ecutoff': nonspec_ecutoff})
         # after a partial function is created, mapping is easier
-        with cc.ThreadPoolExecutor(max_workers = num_threads) as executor:
+        with cc.ThreadPoolExecutor(max_workers=num_threads) as executor:
             res = executor.map(pPH_partial, predlist)
             ready_count.value += len(predlist)
 
@@ -153,52 +172,56 @@ def predict(predlist, dataset, ready_count,
         q.put(res)
         return None
 
+
 def predPvalueHelper(pred, dataset, filterval=0.001, spec_ecutoff=0.4, nonspec_ecutoff=0.35):
     '''
     Helper function to shorten predict. Returns a DataFrame of thresholded results
     '''
-    pbmname = '.'.join(map(str,pred.split(".")[1:-1]))
+    pbmname = '.'.join(map(str, pred.split(".")[1:-1]))
     print("Processing " + pbmname)
     start = time.time()
 
     with open(pred, 'r') as f:
         tf_df = pd.read_csv(f, delimiter=' ').round(5).fillna(0)
-        if tf_df.shape[0] < 4**12:
+        if tf_df.shape[0] < 4 ** 12:
             print("Skip %s since it has less rows than 4**12" % pbmname)
             return None
 
     # create a new local dataframe for computation + filtration
-    container = pd.DataFrame(dataset, columns = ['row_key', '12mer', '18mer', 'seqidx', 'diff','z-score', 'pbmname'])
+    container = pd.DataFrame(dataset, columns=['row_key', '12mer', '18mer', 'seqidx', 'diff', 'z-score', 'pbmname'])
 
     # extract the z-scores and pvalues
-    container['z-score'] = tf_df.iloc[container['seqidx'], 1].values # copy values otherwise pd.Series index issue
-    container['p_val'] = scipy.stats.norm.sf(np.abs(container['z-score']))*2
+    container['z-score'] = tf_df.iloc[container['seqidx'], 1].values  # copy values otherwise pd.Series index issue
+    container['p_val'] = scipy.stats.norm.sf(np.abs(container['z-score'])) * 2
 
     # drop the p values above threshold (insignificant)
     container = container[container['p_val'] <= filterval]
 
     # collect diff (done after thresholding)
-    container['diff'] = tf_df.iloc[container['seqidx'], 0].values # copy values otherwise pd.Series index issue
+    container['diff'] = tf_df.iloc[container['seqidx'], 0].values  # copy values otherwise pd.Series index issue
 
     # create a bound column and set the pbmname
     container['binding_status'] = "N/A"
     container['pbmname'] = pbmname
 
     # resort columns
-    container = container[['row_key', '12mer', '18mer', 'seqidx', 'diff','z-score', 'p_val', 'binding_status', 'pbmname']]
+    container = container[
+        ['row_key', '12mer', '18mer', 'seqidx', 'diff', 'z-score', 'p_val', 'binding_status', 'pbmname']]
 
     if spec_ecutoff != -1 and nonspec_ecutoff != -1:
-        eshort_path = "%s/%s_escore.txt" % (config.ESCORE_DIR,pbmname)
+        eshort_path = "%s/%s_escore.txt" % (config.ESCORE_DIR, pbmname)
         short2long_map = "%s/index_short_to_long.csv" % (config.ESCORE_DIR)
-        container['binding_status'] = container['18mer'].apply(lambda x: utils.isbound_escore_18mer(x, eshort_path, short2long_map, spec_ecutoff, nonspec_ecutoff))
+        container['binding_status'] = container['18mer'].apply(
+            lambda x: utils.isbound_escore_18mer(x, eshort_path, short2long_map, spec_ecutoff, nonspec_ecutoff))
 
     container.drop(columns=['seqidx', '18mer'], inplace=True)
 
-    print("Total running time for {}: {:.2f}secs".format(pbmname,time.time()-start))
+    print("Total running time for {}: {:.2f}secs".format(pbmname, time.time() - start))
 
     return container
 
-def postprocess(datalist,gene_names,filteropt=1,filterval=1):
+
+def postprocess(datalist, gene_names, filteropt=1, filterval=1):
     '''
     Aggregate the result from the different processes.
 
@@ -206,24 +229,29 @@ def postprocess(datalist,gene_names,filteropt=1,filterval=1):
     '''
     datalist = pd.concat(datalist, ignore_index=True, axis=0)
 
-    datalist.sort_values(by = ['row_key', '12mer', 'p_val'], ascending=True, inplace=True)
+    datalist.sort_values(by=['row_key', '12mer', 'p_val'], ascending=True, inplace=True)
 
-    pbmtohugo = pd.read_csv(config.PBM_HUGO_MAPPING, sep=':', index_col=0, header=None)[1].map(lambda x: x.strip().split(','))
+    pbmtohugo = pd.read_csv(config.PBM_HUGO_MAPPING, sep=':', index_col=0, header=None)[1].map(
+        lambda x: x.strip().split(','))
 
     datalist['wild'] = datalist['12mer'].map(lambda x: x[:11])
     datalist['mutant'] = datalist['12mer'].map(lambda x: x[:5] + x[11] + x[6:11])
-    datalist['TF_gene'] = datalist['pbmname'].apply(lambda x: x if x == 'None' else ",".join([gene for gene in pbmtohugo[x] if gene in gene_names]))
+    datalist['TF_gene'] = datalist['pbmname'].apply(
+        lambda x: x if x == 'None' else ",".join([gene for gene in pbmtohugo[x] if gene in gene_names]))
 
     # reindex and rename the columns
-    datalist = datalist[['row_key', 'wild', 'mutant', 'diff', 'z-score', 'p_val', 'TF_gene', 'binding_status', 'pbmname']]
-    datalist.columns = ["row","wild","mutant","diff","z_score","p_value","TF_gene","binding_status","pbmname"]
+    datalist = datalist[
+        ['row_key', 'wild', 'mutant', 'diff', 'z-score', 'p_val', 'TF_gene', 'binding_status', 'pbmname']]
+    datalist.columns = ["row", "wild", "mutant", "diff", "z_score", "p_value", "TF_gene", "binding_status", "pbmname"]
 
     return datalist
 
-def parse_tfgenes(filepath, prefix = "prediction6mer.", sufix = ".txt"):
+
+def parse_tfgenes(filepath, prefix="prediction6mer.", sufix=".txt"):
     genes = open(filepath).read().splitlines()
     unique_pbms = list({prefix + tf + sufix for gene in genes for tf in config.HUGO_PBM_MAPPING[gene]})
-    return {"genes":genes,"pbms":unique_pbms}
+    return {"genes": genes, "pbms": unique_pbms}
+
 
 def do_prediction(intbl, pbms, gene_names,
                   filteropt="p-value", filterval=0.0001, spec_ecutoff=0.4, nonspec_ecutoff=0.35, num_threads=None):
@@ -237,24 +265,30 @@ def do_prediction(intbl, pbms, gene_names,
     start_time = time.time()
 
     # move the comment here for testing
-    predfiles = [config.PREDDIR + "/" + pbm for pbm in pbms] # os.listdir(preddir)
-    preds = utils.chunkify(predfiles,config.PCOUNT) # chunks the predfiles for each process
+    predfiles = [config.PREDDIR + "/" + pbm for pbm in pbms]  # os.listdir(preddir)
+    preds = utils.chunkify(predfiles, config.PCOUNT)  # chunks the predfiles for each process
 
     # need to use manager here
     shared_ready_sum = mp.Manager().Value('i', 0)
 
     if filteropt == "p-value":
         filterval = float(filterval)
-    else: #z-score
+    else:  # z-score
         filterval = int(filterval)
 
-    predict_partial = ft.partial(predict, **{'dataset':intbl, 'ready_count':shared_ready_sum,
-            'filteropt':filteropt, 'filterval':filterval, 'spec_ecutoff':spec_ecutoff, 'nonspec_ecutoff':nonspec_ecutoff, 'num_threads':num_threads})
+    predict_partial = ft.partial(predict, **{'dataset': intbl, 'ready_count': shared_ready_sum,
+                                             'filteropt': filteropt, 'filterval': filterval,
+                                             'spec_ecutoff': spec_ecutoff, 'nonspec_ecutoff': nonspec_ecutoff,
+                                             'num_threads': num_threads})
 
-    with cc.ProcessPoolExecutor(config.PCOUNT) as executor:
-        res = executor.map(predict_partial, preds)
+    if _MP:
+        with cc.ProcessPoolExecutor(config.PCOUNT) as executor:
+            res = executor.map(predict_partial, preds)
+    else:
+        res = map(predict_partial, preds)
 
-    return postprocess(res,gene_names,filteropt,filterval)
+    return postprocess(res, gene_names, filteropt, filterval)
+
 
 def main():
     """nonspec_bind_cutoff = 0.35
@@ -270,12 +304,11 @@ def main():
     # https://stackoverflow.com/questions/53890693/cprofile-causes-pickling-error-when-running-multiprocessing-python-code
     import cProfile
     if sys.modules['__main__'].__file__ == cProfile.__file__:
-        import qbic # re-import main (does *not* use cache or execute as __main__)
+        import qbic  # re-import main (does *not* use cache or execute as __main__)
         globals().update(vars(qbic))  # Replaces current contents with newly imported stuff
         sys.modules['__main__'] = qbic  # Ensures pickle lookups on __main__ find matching version
 
-
-    parser = argparse.ArgumentParser(description = 'TF Mutation Predictions')
+    parser = argparse.ArgumentParser(description='TF Mutation Predictions')
     parser.add_argument('-i', '--inputfile', action="store", dest="inputfile", type=str,
                         help='Input mutation file in .vcf, .tsv, .csv, or .txt format.')
     parser.add_argument('-g', '--genesfile', action="store", dest="genesfile", type=str,
@@ -298,17 +331,22 @@ def main():
                         default=None, help='Number of concurrent file I/O threads to use (per core)')
     args = parser.parse_args()
 
-    #python3 qbic.py -i testing_resources/single_mutations_sample.tsv -g testing_resources/gene_input.txt -c hg19
+    # python3 qbic.py -i testing_resources/single_mutations_sample.tsv -g testing_resources/gene_input.txt -c hg19
     # input_mutation_test.vcf
     # -t mut
-    #TfX E2F
+    # TfX E2F
 
-    tbl = inittbl(args.inputfile, args.chrver, filetype = args.filetype)
+    tbl = inittbl(args.inputfile, args.chrver, filetype=args.filetype)
     input_genes = parse_tfgenes(args.genesfile)
     res = do_prediction(tbl, input_genes["pbms"], input_genes["genes"], args.filteropt, args.filterval,
-                                         args.escorespec, args.escorenonspec, args.numthreads)
+                        args.escorespec, args.escorenonspec, args.numthreads)
     print("Writing output to %s" % args.outpath)
-    res.to_csv(args.outpath, index = False, sep="\t")
+    res.to_csv(args.outpath, index=False, sep="\t")
 
-if __name__=="__main__":
-    main()
+
+if __name__ == "__main__":
+    # Leon: run with or without profiling
+    if _PROFILE:
+        cProfile.run('main()', 'profile_{}.stats'.format('mp' if _MP else 'nomp'))
+    else:
+        main()
