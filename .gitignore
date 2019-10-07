@@ -22,3 +22,6 @@ generate_prediction/test*
 
 # ignore result from mapping_generator
 website/mapping_generator/mapping_data
+
+# others
+/.idea
