@@ -19,8 +19,8 @@ import config
 import cProfile
 
 # Leon: Flags to toggle profiling and multiprocessing
-_PROFILE = False
-_MP = True
+_PROFILE = True
+_MP = False
 
 
 def inittbl(filename, chromosome_version, kmer=6, filetype=""):
