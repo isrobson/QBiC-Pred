@@ -272,7 +272,7 @@ def do_prediction(intbl, pbms, gene_names,
         with cc.ProcessPoolExecutor(config.PCOUNT) as executor:
             res = executor.map(predict_partial, preds)
     else:
-        res = map(predict_partial, preds)
+        res = list(map(predict_partial, preds))
 
     return postprocess(res,gene_names,filteropt,filterval)
 
