@@ -1,3 +1,3 @@
 #!/bin/bash -e
 
-rm -f profile*.stats predictions.tsv strace*.out
+rm -f profile*.stats predictions*.tsv strace*.out
